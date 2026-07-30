@@ -86,42 +86,46 @@ impl MyInstantsClient {
         let doc = Html::parse_document(html);
         let mut sounds = Vec::new();
 
-        // Стратегия 1: Ищем кнопки с onclick содержащим /media/sounds/
-        let btn_selector = Selector::parse("button[onclick]").unwrap();
-        for el in doc.select(&btn_selector) {
-            if let Some(onclick) = el.value().attr("onclick") {
-                if onclick.contains("/media/sounds/") {
-                    let name = el.text().collect::<String>().trim().to_string();
-                    let url = Self::extract_media_url(onclick)
-                        .map(|u| if u.starts_with("http") { u } else { format!("{}{}", BASE_URL, u) })
-                        .unwrap_or_default();
+        let instant_selector = Selector::parse(".instant").unwrap();
+        let button_selector = Selector::parse("button.small-button").unwrap();
+        let link_selector = Selector::parse("a.instant-link").unwrap();
 
-                    if !name.is_empty() {
-                        sounds.push(ShopSound {
-                            name,
-                            url,
-                            category: None,
-                        });
+        for el in doc.select(&instant_selector) {
+            let mut mp3_url = None;
+            if let Some(btn) = el.select(&button_selector).next() {
+                if let Some(onclick) = btn.value().attr("onclick") {
+                    if let Some(extracted) = Self::extract_media_url(onclick) {
+                        let full_mp3 = if extracted.starts_with("http") {
+                            extracted
+                        } else {
+                            format!("{}{}", BASE_URL, extracted)
+                        };
+                        mp3_url = Some(full_mp3);
                     }
+                }
+            }
+
+            if let Some(link) = el.select(&link_selector).next() {
+                let name = link.text().collect::<String>().trim().to_string();
+                let href = link.value().attr("href").unwrap_or("").to_string();
+                if !name.is_empty() {
+                    let url = mp3_url.unwrap_or_else(|| {
+                        if href.starts_with("http") {
+                            href
+                        } else {
+                            format!("{}{}", BASE_URL, href)
+                        }
+                    });
+                    sounds.push(ShopSound {
+                        name,
+                        url,
+                        category: None,
+                    });
                 }
             }
         }
 
-        // Стратегия 2: Ищем ссылки на instant-страницы (всегда, не только если кнопок нет)
-        let link_selector = Selector::parse("a[href^='/en/instant/']").unwrap();
-        for el in doc.select(&link_selector) {
-            let name = el.text().collect::<String>().trim().to_string();
-            let href = el.value().attr("href").unwrap_or("").to_string();
-            if !name.is_empty() && !href.is_empty() {
-                sounds.push(ShopSound {
-                    name,
-                    url: href,
-                    category: None,
-                });
-            }
-        }
-
-        // Убираем дубликаты по имени (приоритет — первый найденный, с прямым MP3 URL)
+        // Убираем дубликаты по имени
         let mut seen = std::collections::HashSet::new();
         sounds.retain(|s| seen.insert(s.name.clone()));
 
@@ -129,10 +133,9 @@ impl MyInstantsClient {
     }
 
     fn extract_media_url(onclick: &str) -> Option<String> {
-        // Формат: play(".../media/sounds/xxx.mp3") или similar
         let start = onclick.find("/media/")?;
         let sub = &onclick[start..];
-        let end = sub.find('"').or_else(|| sub.find(')'))?;
-        Some(sub[..end].to_string())
+        let end = sub.find(|c| c == '\'' || c == '"' || c == ',' || c == ')' || c == ' ');
+        end.map(|e| sub[..e].to_string())
     }
 }

@@ -7,11 +7,15 @@ use crate::AppState;
 
 pub struct SettingsPage {
     container: gtk4::Box,
-    state: Rc<RefCell<AppState>>,
+    status_row: adw::ActionRow,
+    mic_status_row: adw::ActionRow,
+    mic_dropdown: DropDown,
+    source_ids: Vec<String>,
+    _state: Rc<RefCell<AppState>>,
 }
 
 impl SettingsPage {
-    pub fn new(state: Rc<RefCell<AppState>>) -> Self {
+    pub fn new(state: Rc<RefCell<AppState>>) -> Rc<Self> {
         let container = gtk4::Box::new(Orientation::Vertical, 12);
         container.set_margin_start(12);
         container.set_margin_end(12);
@@ -42,7 +46,7 @@ impl SettingsPage {
         mic_section.add(&status_row);
         container.append(&mic_section);
 
-        // Секция выбора реального микрофона (создаём ДО кнопок, чтобы ссылаться из колбеков)
+        // Секция выбора реального микрофона
         let mic_select_section = adw::PreferencesGroup::new();
         mic_select_section.set_title("Микрофон для наложения");
 
@@ -52,12 +56,15 @@ impl SettingsPage {
         let source_names = StringList::new(&[]);
         let mut source_ids: Vec<String> = Vec::new();
         for src in &sources {
-            let display = src
+            let mut display = src
                 .strip_prefix("alsa_input.")
                 .or_else(|| src.strip_prefix("alsa_input_pci-"))
                 .or_else(|| src.strip_prefix("pulse_input."))
                 .unwrap_or(src)
                 .replace('_', " ");
+            if display.len() > 30 {
+                display = format!("{}...", &display[..27]);
+            }
             source_names.append(&display);
             source_ids.push(src.clone());
         }
@@ -75,6 +82,14 @@ impl SettingsPage {
             ))
             .build();
         mic_dropdown.set_hexpand(true);
+
+        // Устанавливаем начальное выбранное значение в соответствии с активным микрофоном
+        let current_source = state.borrow().player.real_mic_source().to_string();
+        if !current_source.is_empty() {
+            if let Some(idx) = source_ids.iter().position(|id| id == &current_source) {
+                mic_dropdown.set_selected(idx as u32);
+            }
+        }
 
         let mic_select_row = adw::ActionRow::builder()
             .title("Реальный микрофон")
@@ -104,14 +119,33 @@ impl SettingsPage {
         let s_create = state.clone();
         let st_create = status_row.clone();
         let mic_st_create = mic_status_row.clone();
+        let dd_create = mic_dropdown.clone();
+        let ids_create = source_ids.clone();
         create_btn.connect_clicked(move |_| {
             let mut s = s_create.borrow_mut();
             if let Ok(()) = s.virtual_mic.create() {
                 let sink = s.virtual_mic.sink_name().to_string();
                 s.player.set_virtual_mic_sink(&sink);
-                s.player.start_mic_passthrough();
+                
+                // Проверяем выбранный микрофон в списке
+                let idx = dd_create.selected() as usize;
+                let mut mic_src = String::new();
+                if idx < ids_create.len() && !ids_create[idx].is_empty() {
+                    mic_src = ids_create[idx].clone();
+                }
+
                 st_create.set_subtitle("Активен");
-                mic_st_create.set_subtitle(if s.player.is_mic_passthrough_active() { "Активно" } else { "Неактивно" });
+                
+                // Запускаем passthrough с задержкой 500мс
+                let s_clone = s_create.clone();
+                let mic_st_clone = mic_st_create.clone();
+                gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+                    let mut s = s_clone.borrow_mut();
+                    if !mic_src.is_empty() {
+                        s.player.set_real_mic_source(&mic_src);
+                    }
+                    mic_st_clone.set_subtitle(if s.player.is_mic_passthrough_active() { "Активно" } else { "Неактивно" });
+                });
             }
         });
 
@@ -161,7 +195,9 @@ impl SettingsPage {
         let mo_ref = mic_sw.clone();
         spk_sw.connect_active_notify(move |sw| {
             let active = sw.is_active();
-            if active != !mo_ref.is_active() { mo_ref.set_active(!active); }
+            if mo_ref.is_active() == active {
+                mo_ref.set_active(!active);
+            }
             s_spk.borrow_mut().player.set_play_to_speakers(active);
         });
 
@@ -169,7 +205,9 @@ impl SettingsPage {
         let spk_ref = spk_sw.clone();
         mic_sw.connect_active_notify(move |sw| {
             let active = sw.is_active();
-            if active != spk_ref.is_active() { spk_ref.set_active(!active); }
+            if spk_ref.is_active() == active {
+                spk_ref.set_active(!active);
+            }
             s_mo.borrow_mut().player.set_play_to_speakers(!active);
         });
 
@@ -181,11 +219,12 @@ impl SettingsPage {
         // Обработчик выбора микрофона
         let s_mic = state.clone();
         let mic_st_ref = mic_status_row.clone();
+        let ids_ref = source_ids.clone();
         mic_dropdown.connect_selected_notify(move |dd| {
             let idx = dd.selected() as usize;
             let s = s_mic.borrow();
-            if idx < source_ids.len() && !source_ids[idx].is_empty() {
-                let src = source_ids[idx].clone();
+            if idx < ids_ref.len() && !ids_ref[idx].is_empty() {
+                let src = ids_ref[idx].clone();
                 drop(s);
                 let mut s = s_mic.borrow_mut();
                 s.player.set_real_mic_source(&src);
@@ -197,7 +236,28 @@ impl SettingsPage {
             }
         });
 
-        Self { container, state }
+        Rc::new(Self {
+            container,
+            status_row,
+            mic_status_row,
+            mic_dropdown,
+            source_ids,
+            _state: state,
+        })
     }
+
+    pub fn refresh(&self) {
+        let s = self._state.borrow();
+        self.status_row.set_subtitle(if s.virtual_mic.is_active() { "Активен" } else { "Неактивен" });
+        self.mic_status_row.set_subtitle(if s.player.is_mic_passthrough_active() { "Активно" } else { "Неактивно" });
+
+        let current_source = s.player.real_mic_source().to_string();
+        if !current_source.is_empty() {
+            if let Some(idx) = self.source_ids.iter().position(|id| id == &current_source) {
+                self.mic_dropdown.set_selected(idx as u32);
+            }
+        }
+    }
+
     pub fn widget(&self) -> gtk4::Widget { self.container.clone().upcast() }
 }

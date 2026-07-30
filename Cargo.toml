@@ -1,6 +1,6 @@
 [package]
 name = "soundpaad"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -19,3 +19,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 futures-channel = "0.3"
 once_cell = "1"
 urlencoding = "2"
+evdev = "0.13.2"

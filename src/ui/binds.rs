@@ -5,7 +5,6 @@ use gtk4::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::db::models::Bind;
 use crate::AppState;
 
 pub struct BindsPage {
@@ -67,6 +66,7 @@ impl BindsPage {
             let label = Label::new(Some(&format!("{} → {}", key_str, track_name)));
             label.set_hexpand(true);
             label.set_halign(gtk4::Align::Start);
+            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
 
             let delete_btn = Button::with_label("Удалить");
             delete_btn.add_css_class("destructive-action");

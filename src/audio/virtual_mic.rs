@@ -8,6 +8,7 @@ pub enum AudioServer {
 }
 
 const VIRTUAL_MIC_NAME: &str = "SoundPad_Mic";
+const VIRTUAL_SINK_NAME: &str = "SoundPad_Sink";
 const VIRTUAL_MIC_DESC: &str = "SoundPad Virtual Microphone";
 
 pub struct VirtualMic {
@@ -51,15 +52,18 @@ impl VirtualMic {
     }
 
     pub fn sink_name(&self) -> &str {
+        VIRTUAL_SINK_NAME
+    }
+
+    pub fn source_name(&self) -> &str {
         VIRTUAL_MIC_NAME
     }
 
     pub fn create(&mut self) -> Result<()> {
-        if self.sink_id.is_some() {
-            return Ok(());
-        }
+        // Убиваем все старые дубликаты
+        self.cleanup_duplicates();
 
-        let sink_name = format!("sink_name={}", VIRTUAL_MIC_NAME);
+        let sink_arg = format!("sink_name={}", VIRTUAL_SINK_NAME);
         let sink_desc = format!("sink_properties=device.description=\"{}\"", VIRTUAL_MIC_DESC);
 
         // Создаём null sink
@@ -67,7 +71,7 @@ impl VirtualMic {
             .args([
                 "load-module",
                 "module-null-sink",
-                &sink_name,
+                &sink_arg,
                 "sink_format=s16le",
                 "sink_rate=48000",
                 "sink_channels=2",
@@ -87,23 +91,28 @@ impl VirtualMic {
         let sink_id: u32 = id_str.trim().parse().context("Не удалось распарсить ID sink")?;
         self.sink_id = Some(sink_id);
 
-        // Создаём loopback — перенаправление звука из виртуального микрофона в реальные колонки
-        let monitor_name = format!("{}\\.monitor", VIRTUAL_MIC_NAME);
-        let loopback_output = Command::new("pactl")
+        // Создаём remap-source из monitor — чтобы голосовой чат видел его как настоящий микрофон
+        let monitor_name = format!("{}.monitor", VIRTUAL_SINK_NAME);
+        let remap_output = Command::new("pactl")
             .args([
                 "load-module",
-                "module-loopback",
-                &format!("source={}", monitor_name),
-                "latency_msec=1",
+                "module-remap-source",
+                &format!("source_name={}", VIRTUAL_MIC_NAME),
+                &format!("master={}", monitor_name),
+                &format!("source_properties=device.description=\"{}\"", VIRTUAL_MIC_DESC),
             ])
             .output()
-            .context("Не удалось создать loopback")?;
+            .context("Не удалось создать remap-source")?;
 
-        if loopback_output.status.success() {
-            let lb_id_str = String::from_utf8_lossy(&loopback_output.stdout);
-            if let Ok(lb_id) = lb_id_str.trim().parse::<u32>() {
+        if remap_output.status.success() {
+            let id = String::from_utf8_lossy(&remap_output.stdout).trim().to_string();
+            if let Ok(lb_id) = id.parse::<u32>() {
                 self.loopback_id = Some(lb_id);
             }
+            eprintln!("VirtualMic: микрофон создан (ID: {}, Name: {})", id, VIRTUAL_MIC_NAME);
+        } else {
+            let err = String::from_utf8_lossy(&remap_output.stderr);
+            eprintln!("VirtualMic: ошибка создания микрофона: {}", err);
         }
 
         Ok(())
@@ -142,6 +151,30 @@ impl VirtualMic {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    fn cleanup_duplicates(&self) {
+        // Находим и выгружаем все старые модули с SoundPad
+        let Ok(output) = Command::new("pactl")
+            .args(["list", "short", "modules"])
+            .output()
+        else {
+            return;
+        };
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            if line.contains("SoundPad") {
+                if let Some(id_str) = line.split_whitespace().next() {
+                    if let Ok(id) = id_str.parse::<u32>() {
+                        eprintln!("VirtualMic: выгружаем модуль {}", id);
+                        let _ = Command::new("pactl")
+                            .args(["unload-module", &id.to_string()])
+                            .output();
+                    }
+                }
+            }
+        }
+    }
+
     pub fn list_sources() -> Result<Vec<String>> {
         let output = Command::new("pactl")
             .args(["list", "short", "sources"])
@@ -153,6 +186,7 @@ impl VirtualMic {
             .lines()
             .filter_map(|l| l.split_whitespace().nth(1).map(String::from))
             .filter(|s| !s.ends_with(".monitor"))
+            .filter(|s| !s.contains("SoundPad"))
             .collect())
     }
 }

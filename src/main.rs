@@ -23,6 +23,9 @@ pub struct AppState {
 }
 
 fn main() -> glib::ExitCode {
+    // Убиваем старые процессы soundpaad
+    kill_old_processes();
+
     gstreamer::init().expect("Не удалось инициализировать GStreamer");
 
     let app = Application::builder()
@@ -47,4 +50,24 @@ fn build_ui(app: &Application) {
     }));
 
     let _ui = ui::app::AppUI::build(app, state.clone());
+}
+
+fn kill_old_processes() {
+    let current = std::process::id();
+    if let Ok(output) = std::process::Command::new("pgrep")
+        .args(["-x", "soundpaad"])
+        .output()
+    {
+        let pids = String::from_utf8_lossy(&output.stdout);
+        for line in pids.lines() {
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                if pid != current {
+                    eprintln!("Убиваем старый процесс soundpaad: {}", pid);
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output();
+                }
+            }
+        }
+    }
 }

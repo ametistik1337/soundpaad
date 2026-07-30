@@ -7,6 +7,7 @@ use std::path::Path;
 
 pub struct AudioPlayer {
     pipelines: HashMap<i64, Pipeline>,
+    watch_guards: HashMap<i64, gstreamer::bus::BusWatchGuard>,
     virtual_mic_sink: String,
     default_sink: String,
     play_to_speakers: bool,
@@ -23,6 +24,7 @@ impl AudioPlayer {
 
         Ok(Self {
             pipelines: HashMap::new(),
+            watch_guards: HashMap::new(),
             virtual_mic_sink: virtual_mic_sink.to_string(),
             default_sink,
             play_to_speakers: true,
@@ -34,42 +36,40 @@ impl AudioPlayer {
     pub fn play(&mut self, track_id: i64, file_path: &str, volume: f64) -> Result<()> {
         self.stop(track_id).ok();
 
-        let path = Path::new(file_path);
-        if !path.exists() {
-            anyhow::bail!("Файл не найден: {}", file_path);
-        }
-
-        let canonical = path.canonicalize()?;
+        let uri = if file_path.starts_with("http://") || file_path.starts_with("https://") {
+            file_path.to_string()
+        } else {
+            let path = Path::new(file_path);
+            if !path.exists() {
+                anyhow::bail!("Файл не найден: {}", file_path);
+            }
+            let canonical = path.canonicalize()?;
+            format!("file://{}", canonical.display())
+        };
 
         let launch_str = if self.play_to_speakers {
             format!(
-                "filesrc location=\"{}\" ! decodebin ! audioconvert ! audioresample ! volume volume={} ! tee name=t \
-                 t. ! queue ! pulsesink device=\"{}\" sync=false \
-                 t. ! queue ! pulsesink device=\"{}\" sync=false",
-                canonical.display(),
-                volume,
-                self.default_sink,
-                self.virtual_mic_sink,
+                "playbin uri=\"{}\" volume={} audio-sink=\"tee name=t t. ! queue ! audioconvert ! audioresample ! pulsesink device=\\\"{}\\\" sync=false t. ! queue ! audioconvert ! audioresample ! pulsesink device=\\\"{}\\\" sync=false\"",
+                uri, volume, self.default_sink, self.virtual_mic_sink
             )
         } else {
             format!(
-                "filesrc location=\"{}\" ! decodebin ! audioconvert ! audioresample ! volume volume={} ! pulsesink device=\"{}\" sync=false",
-                canonical.display(),
-                volume,
-                self.virtual_mic_sink,
+                "playbin uri=\"{}\" volume={} audio-sink=\"audioconvert ! audioresample ! pulsesink device=\\\"{}\\\" sync=false\"",
+                uri, volume, self.virtual_mic_sink
             )
         };
 
-        eprintln!("Play: pipeline={}", launch_str);
+        eprintln!("Play: track_id={} uri={} speakers={}", track_id, uri, self.play_to_speakers);
 
         let pipeline = gstreamer::parse::launch(&launch_str)
             .map_err(|e| { eprintln!("Play: ошибка создания pipeline: {}", e); e })?;
 
-        let pipeline_clone = pipeline.clone().downcast::<Pipeline>().unwrap_or_else(|_| {
-            Pipeline::new()
-        });
+        let pipeline = pipeline.downcast::<Pipeline>()
+            .map_err(|_| anyhow::anyhow!("Pipeline downcast failed"))?;
+
+        let pipeline_clone = pipeline.clone();
         let bus = pipeline.bus().unwrap();
-        let _watch_guard = bus.add_watch(move |_bus, msg| {
+        let watch_guard = bus.add_watch(move |_bus, msg| {
             use gstreamer::MessageView;
             match msg.view() {
                 MessageView::Error(err) => {
@@ -87,22 +87,21 @@ impl AudioPlayer {
         pipeline.set_state(State::Playing)
             .map_err(|e| { eprintln!("Play: ошибка запуска: {}", e); e })?;
 
-        eprintln!("Play: запущен track_id={}", track_id);
-
-        let pipeline_downcast = pipeline.downcast::<Pipeline>()
-            .map_err(|_| anyhow::anyhow!("Pipeline downcast failed"))?;
-        self.pipelines.insert(track_id, pipeline_downcast);
+        self.pipelines.insert(track_id, pipeline);
+        self.watch_guards.insert(track_id, watch_guard);
         Ok(())
     }
 
     pub fn stop(&mut self, track_id: i64) -> Result<()> {
+        self.watch_guards.remove(&track_id);
         if let Some(pipeline) = self.pipelines.remove(&track_id) {
-            pipeline.set_state(State::Null)?;
+            let _ = pipeline.set_state(State::Null);
         }
         Ok(())
     }
 
     pub fn stop_all(&mut self) {
+        self.watch_guards.clear();
         for (_, pipeline) in self.pipelines.drain() {
             let _ = pipeline.set_state(State::Null);
         }
@@ -115,10 +114,12 @@ impl AudioPlayer {
     }
 
     pub fn set_virtual_mic_sink(&mut self, sink: &str) {
+        eprintln!("AudioPlayer: установлен virtual_mic_sink={}", sink);
         self.virtual_mic_sink = sink.to_string();
     }
 
     pub fn set_default_sink(&mut self, sink: &str) {
+        eprintln!("AudioPlayer: установлен default_sink={}", sink);
         self.default_sink = sink.to_string();
     }
 
@@ -139,8 +140,14 @@ impl AudioPlayer {
     }
 
     pub fn set_real_mic_source(&mut self, source: &str) {
+        if self.real_mic_source == source && self.is_mic_passthrough_active() {
+            return;
+        }
+        eprintln!("AudioPlayer: установлен real_mic_source={}", source);
         self.real_mic_source = source.to_string();
-        self.start_mic_passthrough();
+        if !self.real_mic_source.is_empty() {
+            self.start_mic_passthrough();
+        }
     }
 
     pub fn real_mic_source(&self) -> &str {
@@ -148,8 +155,6 @@ impl AudioPlayer {
     }
 
     /// Запускает прохождение реального микрофона через виртуальный микрофон
-    /// Реальный микрофон -> pulsesink (вирт. микр.)
-    /// Звуки саундпада тоже идут в вирт. микр., поэтому они смешиваются
     pub fn start_mic_passthrough(&mut self) {
         self.stop_mic_passthrough();
 
@@ -158,18 +163,22 @@ impl AudioPlayer {
             return;
         }
 
+        // Важно: для PipeWire иногда лучше не указывать устройство, если оно по умолчанию,
+        // но здесь мы указываем явно. Используем audioconvert и audioresample.
         let launch_str = format!(
-            "pulsesrc device=\"{}\" ! audioconvert ! audioresample ! volume volume=1.0 ! pulsesink device=\"{}\" sync=false",
+            "pulsesrc device=\"{}\" ! audioconvert ! audioresample ! pulsesink device=\"{}\" sync=false",
             self.real_mic_source,
-            self.virtual_mic_sink,
+            self.virtual_mic_sink
         );
+
+        eprintln!("Mic passthrough: запуск pipeline: {}", launch_str);
 
         match gstreamer::parse::launch(&launch_str) {
             Ok(pipeline) => {
                 let pipeline = pipeline.downcast::<Pipeline>().unwrap_or_else(|_| Pipeline::new());
                 match pipeline.set_state(State::Playing) {
                     Ok(_) => {
-                        eprintln!("Mic passthrough: запущен ({} -> {})", self.real_mic_source, self.virtual_mic_sink);
+                        eprintln!("Mic passthrough: успешно запущен ({} -> {})", self.real_mic_source, self.virtual_mic_sink);
                         self.mic_passthrough = Some(pipeline);
                     }
                     Err(e) => eprintln!("Mic passthrough: ошибка запуска: {}", e),

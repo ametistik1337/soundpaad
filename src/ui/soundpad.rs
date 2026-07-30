@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use gtk4::{Button, FileDialog, FlowBox, FlowBoxChild, Label, Orientation, ScrolledWindow, gio};
+use gtk4::{Button, FileDialog, FlowBox, Label, Orientation, ScrolledWindow, gio};
 use gtk4::gio::{Cancellable, SimpleAction, SimpleActionGroup};
 use gtk4::glib::{self, translate::IntoGlib};
 use std::cell::RefCell;
@@ -95,6 +95,12 @@ impl SoundpadPage {
             let btn = Button::with_label(&track_name);
             btn.add_css_class("pill"); btn.add_css_class("suggested-action");
             btn.set_size_request(100, 40); btn.set_valign(gtk4::Align::Center);
+            if let Some(child) = btn.child() {
+                if let Ok(label) = child.downcast::<gtk4::Label>() {
+                    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    label.set_max_width_chars(16);
+                }
+            }
 
             let s_play = self.state.clone();
             btn.connect_clicked(move |_| {
@@ -132,7 +138,7 @@ impl SoundpadPage {
                 menu.append(Some(&format!("Назначить хоткей: {}", tname_menu)), Some("track.bind"));
                 menu.append(Some("Удалить"), Some("track.delete"));
                 let popover = gtk4::PopoverMenu::from_model(Some(&menu)); popover.set_has_arrow(false);
-                let btn_widget = gesture.widget().unwrap(); popover.set_parent(&btn_widget); popover.show();
+                let btn_widget = gesture.widget().unwrap(); popover.set_parent(&btn_widget); popover.popup();
             });
             btn.add_controller(gesture);
             self.flowbox.insert(&btn, -1);
@@ -149,15 +155,25 @@ fn show_bind_dialog(state: &Rc<RefCell<AppState>>, track_id: i64, track_name: &s
     let captured_key: Rc<RefCell<Option<(u32, u32)>>> = Rc::new(RefCell::new(None));
     let controller = gtk4::EventControllerKey::new();
     let captured_clone = captured_key.clone(); let label_clone = keyval_label.clone();
-    controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifier| {
+    controller.connect_key_pressed(move |_ctrl, keyval, keycode, modifier| {
         let mod_bits = modifier.bits() as u32; let mut parts = Vec::new();
         if mod_bits & gtk4::gdk::ModifierType::CONTROL_MASK.bits() != 0 { parts.push("Ctrl"); }
         if mod_bits & gtk4::gdk::ModifierType::SHIFT_MASK.bits() != 0 { parts.push("Shift"); }
         if mod_bits & gtk4::gdk::ModifierType::ALT_MASK.bits() != 0 { parts.push("Alt"); }
         if mod_bits & gtk4::gdk::ModifierType::SUPER_MASK.bits() != 0 { parts.push("Super"); }
-        let key_name = if let Some(c) = gtk4::gdk::Key::to_unicode(&keyval) { c.to_uppercase().to_string() } else { gtk4::gdk::Key::name(&keyval).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string()) };
+        
+        let english_kv = crate::ui::app::keycode_to_english_keyval(keycode);
+        let final_kv = if english_kv != 0 { english_kv } else { keyval.into_glib() as u32 };
+        
+        let english_key: gtk4::gdk::Key = unsafe { gtk4::glib::translate::from_glib(final_kv) };
+        let key_name = if let Some(c) = english_key.to_unicode() {
+            c.to_uppercase().to_string()
+        } else {
+            english_key.name().map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
+        };
+        
         parts.push(&key_name); label_clone.set_label(&parts.join("+"));
-        *captured_clone.borrow_mut() = Some((keyval.into_glib() as u32, mod_bits));
+        *captured_clone.borrow_mut() = Some((final_kv, mod_bits));
         glib::Propagation::Stop
     });
     dialog.add_controller(controller);
