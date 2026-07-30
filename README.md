@@ -19,7 +19,7 @@ Sound pad приложение для Linux с поддержкой виртуа
 ### AUR (Arch Linux)
 
 ```bash
-yay -S soundpaad-bin
+yay -S soundpaaad-bin
 ```
 
 ### Из исходников
