@@ -54,14 +54,15 @@ sudo pacman -S gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good pulse
 4. В приложениях (Discord, OBS и т.д.) выберите **SoundPad_Mic** как микрофон
 5. Скачивайте звуки из магазина и назначайте хоткеи
 
-## Технологии
+## СТЕК
 
-- **Rust** — язык программирования
+- **Rust** — язык
 - **GTK4 + libadwaita** — UI
 - **GStreamer** — аудио воспроизведение
 - **SQLite** — хранение данных
 - **reqwest + scraper** — парсинг myinstants.com
 
+holy semi vibecode
 ## Лицензия
 
 MIT
