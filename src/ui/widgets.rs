@@ -6,20 +6,23 @@ use egui::{
 };
 
 // ============================================================================
-// 1. Цветовая палитра Pal и токены Kinetix DS
+// 1. Цветовая палитра Monokai (Kinetix DS x Monokai)
 // ============================================================================
 
-pub const PAL_PANEL: Color32 = Color32::from_rgb(0x0A, 0x0B, 0x0E); // Глубокий графитовый фон окна
-pub const PAL_CARD: Color32 = Color32::from_rgb(0x13, 0x15, 0x1A);  // Карточки, поля ввода, кнопки
-pub const PAL_CARD_HI: Color32 = Color32::from_rgb(0x19, 0x1C, 0x24); // Вложенные плашки, пустые сегменты
-pub const PAL_LINE: Color32 = Color32::from_rgb(0x23, 0x26, 0x2E); // Субпиксельные границы 1px
-pub const PAL_LINE_HOVER: Color32 = Color32::from_rgb(0xF5, 0x9E, 0x0B); // Подсветка границ при наведении
-pub const PAL_TEXT: Color32 = Color32::from_rgb(0xE8, 0xEA, 0xF0); // Высококонтрастный текст
-pub const PAL_MUTED: Color32 = Color32::from_rgb(0x7E, 0x85, 0x94); // Приглушенный текст / подсказки / единицы
-pub const PAL_ACCENT: Color32 = Color32::from_rgb(0xF5, 0x9E, 0x0B); // Amber-500 (защищенный семантический токен)
-pub const PAL_ON_ACCENT: Color32 = Color32::from_rgb(0x0A, 0x0B, 0x0E); // Темный текст на янтарной заливке
-pub const PAL_DANGER: Color32 = Color32::from_rgb(0xDC, 0x46, 0x46); // Опасные действия / стоп / удаление
-pub const PAL_FILL: Color32 = Color32::from_rgb(0x2A, 0x2E, 0x39); // Нажатое состояние / промежуточная заливка
+pub const PAL_PANEL: Color32 = Color32::from_rgb(0x1E, 0x1F, 0x1C); // #1E1F1C Глубокий монокай базис окна
+pub const PAL_CARD: Color32 = Color32::from_rgb(0x27, 0x28, 0x22);  // #272822 Карточки, поля ввода, кнопки
+pub const PAL_CARD_HI: Color32 = Color32::from_rgb(0x3E, 0x3D, 0x32); // #3E3D32 Вложенные плашки, пустые сегменты
+pub const PAL_LINE: Color32 = Color32::from_rgb(0x49, 0x48, 0x3E); // #49483E Субпиксельные границы 1px
+pub const PAL_LINE_HOVER: Color32 = Color32::from_rgb(0xFD, 0x97, 0x1F); // #FD971F Monokai Orange при наведении
+pub const PAL_TEXT: Color32 = Color32::from_rgb(0xF8, 0xF8, 0xF2); // #F8F8F2 Высококонтрастный текст
+pub const PAL_MUTED: Color32 = Color32::from_rgb(0x75, 0x71, 0x5E); // #75715E Комментарии / подсказки / единицы
+pub const PAL_ACCENT: Color32 = Color32::from_rgb(0xFD, 0x97, 0x1F); // #FD971F Monokai Orange (главный акцент)
+pub const PAL_ON_ACCENT: Color32 = Color32::from_rgb(0x1E, 0x1F, 0x1C); // Темный текст на акцентной заливке
+pub const PAL_DANGER: Color32 = Color32::from_rgb(0xF9, 0x26, 0x72); // #F92672 Monokai Pink (стоп / удаление)
+pub const PAL_GREEN: Color32 = Color32::from_rgb(0xA6, 0xE2, 0x2E);  // #A6E22E Monokai Green (плей / активность)
+pub const PAL_CYAN: Color32 = Color32::from_rgb(0x66, 0xD9, 0xEF);   // #66D9EF Monokai Cyan (микрофон / инфо)
+pub const PAL_YELLOW: Color32 = Color32::from_rgb(0xE6, 0xDB, 0x74); // #E6DB74 Monokai Yellow (хоткеи / предупреждения)
+pub const PAL_FILL: Color32 = Color32::from_rgb(0x3E, 0x3D, 0x32);   // Нажатое состояние / промежуточная заливка
 
 pub const R_BASE: u8 = 8;  // Карточки, модальные окна, панели
 pub const R_SMALL: u8 = 5; // Кнопки, поля ввода, чипы
@@ -56,10 +59,28 @@ impl SpringConfig {
         }
     }
 
+    pub fn highlight() -> Self {
+        Self {
+            stiffness: 420.0,
+            damping: 32.0,
+            mass: 1.0,
+            precision: 0.005,
+        }
+    }
+
     pub fn scale() -> Self {
         Self {
             stiffness: 520.0,
             damping: 18.0,
+            mass: 1.0,
+            precision: 0.005,
+        }
+    }
+
+    pub fn bouncy() -> Self {
+        Self {
+            stiffness: 220.0,
+            damping: 15.0,
             mass: 1.0,
             precision: 0.005,
         }
@@ -169,19 +190,44 @@ impl Spring {
 }
 
 // ============================================================================
-// 3. 24-Сегментный регулятор громкости (Kinetix Volume Gauge)
+// 3. Живая анимация звукового спектра (Live Equalizer Motion)
 // ============================================================================
 
-/// 24-сегментный тактильный регулятор громкости.
-/// При перетаскивании дает мгновенный визуальный отклик, коммит в бэкенд на pointer release.
+/// Рисует анимированный динамический 5-полосный эквалайзер с физическим дыханием
+pub fn draw_animated_equalizer(painter: &egui::Painter, rect: Rect, phase: f32, color: Color32) {
+    let bar_count = 5;
+    let gap = 2.0;
+    let bar_width = ((rect.width() - (bar_count - 1) as f32 * gap) / bar_count as f32).max(2.0);
+
+    for i in 0..bar_count {
+        let x = rect.min.x + i as f32 * (bar_width + gap);
+        let fi = i as f32;
+
+        // Гармонический моушен с фазовым сдвигом для органичной анимации спектра
+        let wave = ((phase * 4.8 + fi * 1.4).sin() * 0.5 + 0.5) * 0.65
+                 + ((phase * 8.2 - fi * 2.1).cos() * 0.5 + 0.5) * 0.35;
+
+        let bar_h = (rect.height() * (0.2 + 0.8 * wave)).clamp(3.0, rect.height());
+        let y = rect.max.y - bar_h;
+        let bar_rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(bar_width, bar_h));
+
+        painter.rect_filled(bar_rect, CornerRadius::same(1), color);
+    }
+}
+
+// ============================================================================
+// 4. 24-Сегментный регулятор громкости (Monokai Volume Gauge)
+// ============================================================================
+
+/// 24-сегментный тактильный регулятор громкости в палитре Monokai.
+/// При перетаскивании дает мгновенный визуальный отклик и тактильный подъем активных сегментов.
 pub fn volume_gauge_24(
     ui: &mut Ui,
-    id_source: impl std::hash::Hash,
+    _id_source: impl std::hash::Hash,
     volume: &mut f32,
     max_volume: f32,
     width: f32,
 ) -> Response {
-    let _id = ui.make_persistent_id(id_source);
     let total_segments = 24;
     let gap = 2.0;
     let height = 20.0;
@@ -212,16 +258,27 @@ pub fn volume_gauge_24(
             let seg_x = rect.min.x + i as f32 * (seg_width + gap);
             let is_active = i < active_segments;
 
-            // При драге активные сегменты приподнимаются на 2px (тактильный подъем)
-            let lift = if is_active && is_interacting { 2.0 } else { 0.0 };
+            // При драге активные сегменты приподнимаются на 3px (тактильный подъем)
+            let lift = if is_active && is_interacting { 3.0 } else { 0.0 };
 
             let seg_rect = Rect::from_min_size(
                 Pos2::new(seg_x, rect.min.y - lift),
                 Vec2::new(seg_width, rect.height() + lift),
             );
 
+            // Цветовая градуировка шкалы Monokai:
+            // 0..17: Зеленый Monokai (#A6E22E)
+            // 17..21: Янтарно-оранжевый Monokai (#FD971F)
+            // 21..24: Розовый Monokai (#F92672) перегрузка
             let (fill, stroke) = if is_active {
-                (PAL_ACCENT, Stroke::NONE)
+                let col = if i >= 21 {
+                    PAL_DANGER
+                } else if i >= 17 {
+                    PAL_ACCENT
+                } else {
+                    PAL_GREEN
+                };
+                (col, Stroke::NONE)
             } else {
                 (PAL_CARD_HI, Stroke::new(1.0_f32, PAL_LINE))
             };
@@ -240,13 +297,14 @@ pub fn volume_gauge_24(
 }
 
 // ============================================================================
-// 4. Тактильные кнопки (Emil Kowalski :active scale 0.97 + ODE Spring)
+// 5. Тактильные кнопки (Emil Kowalski :active scale 0.97 + ODE Spring)
 // ============================================================================
 
 pub struct TactileButton {
     text: WidgetText,
     accent: bool,
     danger: bool,
+    green: bool,
     min_size: Vec2,
 }
 
@@ -256,6 +314,7 @@ impl TactileButton {
             text: text.into(),
             accent: false,
             danger: false,
+            green: false,
             min_size: Vec2::new(60.0, 30.0),
         }
     }
@@ -267,6 +326,11 @@ impl TactileButton {
 
     pub fn danger(mut self) -> Self {
         self.danger = true;
+        self
+    }
+
+    pub fn green(mut self) -> Self {
+        self.green = true;
         self
     }
 
@@ -301,6 +365,14 @@ impl TactileButton {
                     (PAL_CARD_HI, PAL_DANGER, PAL_DANGER)
                 } else {
                     (PAL_CARD, PAL_LINE, PAL_DANGER)
+                }
+            } else if self.green {
+                if is_pressed {
+                    (PAL_GREEN, PAL_GREEN, PAL_ON_ACCENT)
+                } else if is_hovered {
+                    (PAL_CARD_HI, PAL_GREEN, PAL_GREEN)
+                } else {
+                    (PAL_CARD, PAL_LINE, PAL_GREEN)
                 }
             } else if self.accent {
                 if is_pressed {
@@ -342,7 +414,7 @@ impl TactileButton {
 }
 
 // ============================================================================
-// 5. Вспомогательные чипы, бейджи и карточки
+// 6. Вспомогательные чипы, бейджи и карточки
 // ============================================================================
 
 /// Моноширинный бейдж хоткея, например `[f1]`, `[ctrl+1]`, `[нет]`
@@ -356,7 +428,7 @@ pub fn hotkey_badge(ui: &mut Ui, label: &str, active: bool) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
 
     let (bg, border, text_col) = if active {
-        (PAL_CARD_HI, PAL_ACCENT, PAL_ACCENT)
+        (PAL_CARD_HI, PAL_YELLOW, PAL_YELLOW)
     } else {
         (PAL_CARD_HI, PAL_LINE, PAL_MUTED)
     };
@@ -378,7 +450,7 @@ pub fn hotkey_badge(ui: &mut Ui, label: &str, active: bool) {
 }
 
 /// Кнопка переключения вкладок на верхней навигационной панели
-pub fn tab_button(ui: &mut Ui, label: &str, is_selected: bool) -> Response {
+pub fn tab_button(ui: &mut Ui, label: &str, is_selected: bool) -> (Rect, Response) {
     let padding = Vec2::new(14.0, 8.0);
     let font_id = FontId::monospace(13.0);
     let galley = WidgetText::from(label).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, font_id);
@@ -387,48 +459,23 @@ pub fn tab_button(ui: &mut Ui, label: &str, is_selected: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
 
     if ui.is_rect_visible(rect) {
-        let is_pressed = response.is_pointer_button_down_on();
         let is_hovered = response.hovered();
-
-        let drawn_rect = if is_pressed {
-            rect.shrink2(rect.size() * 0.015)
-        } else {
-            rect
-        };
-
         let painter = ui.painter();
 
-        let (bg, text_col) = if is_selected {
-            (PAL_CARD, PAL_ACCENT)
+        let text_col = if is_selected {
+            PAL_ACCENT
         } else if is_hovered {
-            (PAL_CARD_HI, PAL_TEXT)
+            PAL_TEXT
         } else {
-            (Color32::TRANSPARENT, PAL_MUTED)
+            PAL_MUTED
         };
 
-        painter.rect(
-            drawn_rect,
-            CornerRadius::same(R_SMALL),
-            bg,
-            if is_selected { Stroke::new(1.0_f32, PAL_LINE) } else { Stroke::NONE },
-            StrokeKind::Inside,
-        );
-
-        // Индикатор активной вкладки — янтарная полоска внизу
-        if is_selected {
-            let indicator = Rect::from_min_size(
-                Pos2::new(drawn_rect.min.x + 4.0, drawn_rect.max.y - 2.0),
-                Vec2::new(drawn_rect.width() - 8.0, 2.0),
-            );
-            painter.rect_filled(indicator, CornerRadius::same(1), PAL_ACCENT);
-        }
-
         let text_pos = Pos2::new(
-            drawn_rect.center().x - galley.size().x / 2.0,
-            drawn_rect.center().y - galley.size().y / 2.0,
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
         );
         painter.galley(text_pos, galley, text_col);
     }
 
-    response
+    (rect, response)
 }

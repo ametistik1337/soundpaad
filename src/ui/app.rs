@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use egui::{
     CentralPanel, Context, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2,
+    FontId, Pos2, Rect, ScrollArea, Sense, Stroke, TextEdit, TopBottomPanel, Ui, Vec2,
 };
 
 use crate::AppState;
@@ -66,6 +66,13 @@ pub struct SoundpadApp {
     // Всплывающие уведомления (Toast)
     toast: Option<(String, Instant)>,
     last_refresh: Instant,
+
+    // Пружинный моушен для скользящего индикатора табов и аудио-визуализатора
+    tab_spring_x: Spring,
+    tab_spring_w: Spring,
+    tab_initialized: bool,
+    audio_phase: f32,
+    last_frame: Instant,
 }
 
 impl SoundpadApp {
@@ -101,6 +108,11 @@ impl SoundpadApp {
             async_rx,
             toast: None,
             last_refresh: Instant::now(),
+            tab_spring_x: Spring::with_config(0.0, SpringConfig::highlight()),
+            tab_spring_w: Spring::with_config(70.0, SpringConfig::highlight()),
+            tab_initialized: false,
+            audio_phase: 0.0,
+            last_frame: Instant::now(),
         };
 
         app.refresh_data();
@@ -206,6 +218,12 @@ impl SoundpadApp {
 
 impl eframe::App for SoundpadApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let dt = self.last_frame.elapsed().as_secs_f32().clamp(0.0, 0.05);
+        self.last_frame = Instant::now();
+        self.audio_phase += dt * 5.0;
+        self.tab_spring_x.update(dt);
+        self.tab_spring_w.update(dt);
+
         self.check_async_messages();
         self.handle_key_capture(ctx);
 
@@ -215,8 +233,19 @@ impl eframe::App for SoundpadApp {
             self.refresh_data();
         }
 
+        // Проверяем, есть ли играющие звуки для continuous 60/120fps анимации
+        let is_any_playing = if let Ok(state) = self.state.lock() {
+            self.tracks.iter().any(|t| t.id.map(|id| state.player.is_playing(id)).unwrap_or(false))
+        } else {
+            false
+        } || self.active_preview_url.is_some();
+
+        if is_any_playing || !self.tab_spring_x.is_settled() || !self.tab_spring_w.is_settled() {
+            ctx.request_repaint();
+        }
+
         // ====================================================================
-        // Верхняя панель: логотип, вкладки и мастер-громкость
+        // Верхняя панель: логотип, вкладки со скользящей пружиной и мастер-громкость
         // ====================================================================
         TopBottomPanel::top("top_panel")
             .frame(egui::Frame {
@@ -242,22 +271,54 @@ impl eframe::App for SoundpadApp {
 
                     ui.add_space(20.0);
 
-                    // Табы приложения (строчные подписи по Kinetix)
-                    if tab_button(ui, "треки", self.active_tab == Tab::Tracks).clicked() {
+                    // Табы приложения (строчные подписи по Kinetix со скользящей ODE-пружиной)
+                    let (t_tracks, resp_tracks) = tab_button(ui, "треки", self.active_tab == Tab::Tracks);
+                    if resp_tracks.clicked() {
                         self.active_tab = Tab::Tracks;
                         self.refresh_data();
                     }
-                    if tab_button(ui, "магазин", self.active_tab == Tab::Shop).clicked() {
+                    let (t_shop, resp_shop) = tab_button(ui, "магазин", self.active_tab == Tab::Shop);
+                    if resp_shop.clicked() {
                         self.active_tab = Tab::Shop;
                     }
-                    if tab_button(ui, "бинды", self.active_tab == Tab::Binds).clicked() {
+                    let (t_binds, resp_binds) = tab_button(ui, "бинды", self.active_tab == Tab::Binds);
+                    if resp_binds.clicked() {
                         self.active_tab = Tab::Binds;
                         self.refresh_data();
                     }
-                    if tab_button(ui, "настройки", self.active_tab == Tab::Settings).clicked() {
+                    let (t_settings, resp_settings) = tab_button(ui, "настройки", self.active_tab == Tab::Settings);
+                    if resp_settings.clicked() {
                         self.active_tab = Tab::Settings;
                         self.refresh_data();
                     }
+
+                    let active_rect = match self.active_tab {
+                        Tab::Tracks => t_tracks,
+                        Tab::Shop => t_shop,
+                        Tab::Binds => t_binds,
+                        Tab::Settings => t_settings,
+                    };
+
+                    if !self.tab_initialized {
+                        self.tab_spring_x.snap_to(active_rect.min.x);
+                        self.tab_spring_w.snap_to(active_rect.width());
+                        self.tab_initialized = true;
+                    } else {
+                        self.tab_spring_x.set_target(active_rect.min.x);
+                        self.tab_spring_w.set_target(active_rect.width());
+                    }
+
+                    // Скользящий пружинный индикатор активной вкладки
+                    let pill_rect = Rect::from_min_size(
+                        Pos2::new(self.tab_spring_x.value, active_rect.min.y),
+                        Vec2::new(self.tab_spring_w.value, active_rect.height()),
+                    );
+                    let painter = ui.painter();
+                    let bottom_indicator = Rect::from_min_size(
+                        Pos2::new(pill_rect.min.x + 4.0, pill_rect.max.y - 2.5),
+                        Vec2::new(pill_rect.width() - 8.0, 2.5),
+                    );
+                    painter.rect_filled(bottom_indicator, CornerRadius::same(1), PAL_ACCENT);
 
                     // Правая часть: мастер-громкость и кнопка «стоп все»
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -494,7 +555,7 @@ impl SoundpadApp {
                         corner_radius: CornerRadius::same(R_BASE),
                         stroke: Stroke::new(
                             1.0_f32,
-                            if is_playing { PAL_ACCENT } else { PAL_LINE },
+                            if is_playing { PAL_GREEN } else { PAL_LINE },
                         ),
                         ..Default::default()
                     }
@@ -506,21 +567,28 @@ impl SoundpadApp {
                                     to_stop = Some(track_id);
                                 }
                             } else {
-                                if TactileButton::new("▶").accent().min_size(Vec2::new(32.0, 32.0)).show(ui).clicked() {
+                                if TactileButton::new("▶").green().min_size(Vec2::new(32.0, 32.0)).show(ui).clicked() {
                                     to_play = Some((track_id, file_path.clone(), vol * self.master_volume));
                                 }
                             }
 
                             ui.add_space(8.0);
 
-                            // Название звука
+                            // Название звука + живой анимированный эквалайзер
                             ui.vertical(|ui| {
-                                ui.label(
-                                    egui::RichText::new(&track_name)
-                                        .color(if is_playing { PAL_ACCENT } else { PAL_TEXT })
-                                        .font(FontId::monospace(13.0))
-                                        .strong(),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&track_name)
+                                            .color(if is_playing { PAL_GREEN } else { PAL_TEXT })
+                                            .font(FontId::monospace(13.0))
+                                            .strong(),
+                                    );
+                                    if is_playing {
+                                        ui.add_space(8.0);
+                                        let (eq_rect, _) = ui.allocate_exact_size(Vec2::new(28.0, 14.0), Sense::hover());
+                                        draw_animated_equalizer(ui.painter(), eq_rect, self.audio_phase, PAL_GREEN);
+                                    }
+                                });
                                 ui.label(
                                     egui::RichText::new(&file_path)
                                         .color(PAL_MUTED)
@@ -706,7 +774,7 @@ impl SoundpadApp {
                         corner_radius: CornerRadius::same(R_BASE),
                         stroke: Stroke::new(
                             1.0_f32,
-                            if is_previewing { PAL_ACCENT } else { PAL_LINE },
+                            if is_previewing { PAL_GREEN } else { PAL_LINE },
                         ),
                         ..Default::default()
                     }
@@ -718,19 +786,28 @@ impl SoundpadApp {
                                     to_preview = Some(String::new());
                                 }
                             } else {
-                                if TactileButton::new("▶").min_size(Vec2::new(32.0, 32.0)).show(ui).clicked() {
+                                if TactileButton::new("▶").green().min_size(Vec2::new(32.0, 32.0)).show(ui).clicked() {
                                     to_preview = Some(url);
                                 }
                             }
 
                             ui.add_space(8.0);
 
-                            ui.label(
-                                egui::RichText::new(&sound.name)
-                                    .color(if is_previewing { PAL_ACCENT } else { PAL_TEXT })
-                                    .font(FontId::monospace(13.0))
-                                    .strong(),
-                            );
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&sound.name)
+                                            .color(if is_previewing { PAL_GREEN } else { PAL_TEXT })
+                                            .font(FontId::monospace(13.0))
+                                            .strong(),
+                                    );
+                                    if is_previewing {
+                                        ui.add_space(8.0);
+                                        let (eq_rect, _) = ui.allocate_exact_size(Vec2::new(26.0, 14.0), Sense::hover());
+                                        draw_animated_equalizer(ui.painter(), eq_rect, self.audio_phase, PAL_GREEN);
+                                    }
+                                });
+                            });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if TactileButton::new("[скачать]").accent().min_size(Vec2::new(75.0, 26.0)).show(ui).clicked() {
