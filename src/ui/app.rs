@@ -184,12 +184,15 @@ impl SoundpadApp {
                         ..
                     } = event
                     {
-                        if *key == egui::Key::Escape {
+                        if *key == egui::Key::Escape || *key == egui::Key::Delete || *key == egui::Key::Backspace {
+                            // Очистка бинда при нажатии Escape, Delete или Backspace
                             captured = Some(None);
                         } else {
                             let keyval = egui_key_to_code(*key);
-                            let mod_bits = egui_modifiers_to_bits(modifiers);
-                            captured = Some(Some((keyval, mod_bits)));
+                            if keyval != 0 {
+                                let mod_bits = egui_modifiers_to_bits(modifiers);
+                                captured = Some(Some((keyval, mod_bits)));
+                            }
                         }
                         break;
                     }
@@ -208,6 +211,13 @@ impl SoundpadApp {
                         });
                     }
                     self.set_toast(format!("хоткей [{}] привязан", format_key(keyval, modifiers)));
+                    self.refresh_data();
+                } else {
+                    // Очистка бинда
+                    if let Ok(state) = self.state.lock() {
+                        let _ = state.db.delete_bind_by_track(track_id);
+                    }
+                    self.set_toast("бинд очищен");
                     self.refresh_data();
                 }
                 self.binding_track_id = None;
@@ -529,14 +539,11 @@ impl SoundpadApp {
                 let mut to_stop: Option<i64> = None;
                 let mut to_delete: Option<i64> = None;
                 let mut to_bind: Option<i64> = None;
-                let mut volume_to_save: Option<(i64, f64)> = None;
 
                 for track in filtered {
                     let track_id = track.id.unwrap_or(0);
                     let track_name = track.name.clone();
                     let file_path = track.file_path.clone();
-
-                    let mut vol = *self.track_volumes.get(&track_id).unwrap_or(&(track.volume as f32));
 
                     // Ищем назначенный хоткей
                     let bound_key = self.binds.iter().find(|b| b.track_id == track_id);
@@ -568,7 +575,7 @@ impl SoundpadApp {
                                 }
                             } else {
                                 if TactileButton::new("▶").green().min_size(Vec2::new(32.0, 32.0)).show(ui).clicked() {
-                                    to_play = Some((track_id, file_path.clone(), vol * self.master_volume));
+                                    to_play = Some((track_id, file_path.clone(), self.master_volume));
                                 }
                             }
 
@@ -604,35 +611,11 @@ impl SoundpadApp {
 
                                 ui.add_space(8.0);
 
-                                // 24-Сегментный регулятор громкости трека
-                                let gauge = volume_gauge_24(
-                                    ui,
-                                    format!("vol_gauge_{}", track_id),
-                                    &mut vol,
-                                    1.5,
-                                    120.0,
-                                );
-                                if gauge.changed() {
-                                    self.track_volumes.insert(track_id, vol);
-                                }
-                                if gauge.drag_stopped() {
-                                    volume_to_save = Some((track_id, vol as f64));
-                                }
-
-                                ui.label(
-                                    egui::RichText::new(format!("{:.0}%", vol * 100.0))
-                                        .color(PAL_MUTED)
-                                        .font(FontId::monospace(11.0)),
-                                );
-
-                                ui.add_space(8.0);
-
                                 // Бейдж хоткея
                                 let badge_label = match bound_key {
                                     Some(b) => format!("[{}]", format_key(b.keyval, b.modifiers)),
                                     None => "[+ бинд]".to_string(),
                                 };
-                                let is_bound = bound_key.is_some();
 
                                 if TactileButton::new(badge_label)
                                     .min_size(Vec2::new(50.0, 26.0))
@@ -669,11 +652,6 @@ impl SoundpadApp {
                 }
                 if let Some(id) = to_bind {
                     self.binding_track_id = Some(id);
-                }
-                if let Some((id, vol)) = volume_to_save {
-                    if let Ok(state) = self.state.lock() {
-                        let _ = state.db.update_track_volume(id, vol);
-                    }
                 }
             });
     }
@@ -1218,12 +1196,12 @@ fn render_bind_capture_overlay(ui: &mut Ui, track_id: i64, tracks: &[Track]) {
             );
             ui.add_space(14.0);
             ui.label(
-                egui::RichText::new("нажмите любую клавишу (f1-f12, цифры, буквы, с ctrl/alt/shift)...")
+                egui::RichText::new("нажмите любую клавишу (f1-f12, numpad, цифры, буквы, с ctrl/alt/shift)...")
                     .color(PAL_MUTED)
                     .font(FontId::monospace(12.0)),
             );
             ui.label(
-                egui::RichText::new("[escape для отмены]")
+                egui::RichText::new("[del или esc для очистки бинда]")
                     .color(PAL_MUTED)
                     .font(FontId::monospace(11.0)),
             );
@@ -1348,9 +1326,60 @@ fn setup_kinetix_visuals(ctx: &Context) {
     ctx.set_visuals(visuals);
 }
 
-/// Преобразование egui клавиши в evdev/код
+/// Преобразование egui клавиши в evdev код ядра Linux
 fn egui_key_to_code(key: egui::Key) -> u32 {
     match key {
+        egui::Key::Escape => 1,
+        egui::Key::Num1 => 2,
+        egui::Key::Num2 => 3,
+        egui::Key::Num3 => 4,
+        egui::Key::Num4 => 5,
+        egui::Key::Num5 => 6,
+        egui::Key::Num6 => 7,
+        egui::Key::Num7 => 8,
+        egui::Key::Num8 => 9,
+        egui::Key::Num9 => 10,
+        egui::Key::Num0 => 11,
+        egui::Key::Minus => 12,
+        egui::Key::Equals => 13,
+        egui::Key::Backspace => 14,
+        egui::Key::Tab => 15,
+        egui::Key::Q => 16,
+        egui::Key::W => 17,
+        egui::Key::E => 18,
+        egui::Key::R => 19,
+        egui::Key::T => 20,
+        egui::Key::Y => 21,
+        egui::Key::U => 22,
+        egui::Key::I => 23,
+        egui::Key::O => 24,
+        egui::Key::P => 25,
+        egui::Key::OpenBracket => 26,
+        egui::Key::CloseBracket => 27,
+        egui::Key::Enter => 28,
+        egui::Key::A => 30,
+        egui::Key::S => 31,
+        egui::Key::D => 32,
+        egui::Key::F => 33,
+        egui::Key::G => 34,
+        egui::Key::H => 35,
+        egui::Key::J => 36,
+        egui::Key::K => 37,
+        egui::Key::L => 38,
+        egui::Key::Semicolon => 39,
+        egui::Key::Quote => 40,
+                egui::Key::Backslash => 43,
+        egui::Key::Z => 44,
+        egui::Key::X => 45,
+        egui::Key::C => 46,
+        egui::Key::V => 47,
+        egui::Key::B => 48,
+        egui::Key::N => 49,
+        egui::Key::M => 50,
+        egui::Key::Comma => 51,
+        egui::Key::Period => 52,
+        egui::Key::Slash => 53,
+        egui::Key::Space => 57,
         egui::Key::F1 => 59,
         egui::Key::F2 => 60,
         egui::Key::F3 => 61,
@@ -1363,44 +1392,24 @@ fn egui_key_to_code(key: egui::Key) -> u32 {
         egui::Key::F10 => 68,
         egui::Key::F11 => 87,
         egui::Key::F12 => 88,
-        egui::Key::Num1 => 2,
-        egui::Key::Num2 => 3,
-        egui::Key::Num3 => 4,
-        egui::Key::Num4 => 5,
-        egui::Key::Num5 => 6,
-        egui::Key::Num6 => 7,
-        egui::Key::Num7 => 8,
-        egui::Key::Num8 => 9,
-        egui::Key::Num9 => 10,
-        egui::Key::Num0 => 11,
-        egui::Key::A => 30,
-        egui::Key::B => 48,
-        egui::Key::C => 46,
-        egui::Key::D => 32,
-        egui::Key::E => 18,
-        egui::Key::F => 33,
-        egui::Key::G => 34,
-        egui::Key::H => 35,
-        egui::Key::I => 23,
-        egui::Key::J => 36,
-        egui::Key::K => 37,
-        egui::Key::L => 38,
-        egui::Key::M => 50,
-        egui::Key::N => 49,
-        egui::Key::O => 24,
-        egui::Key::P => 25,
-        egui::Key::Q => 16,
-        egui::Key::R => 19,
-        egui::Key::S => 31,
-        egui::Key::T => 20,
-        egui::Key::U => 22,
-        egui::Key::V => 47,
-        egui::Key::W => 17,
-        egui::Key::X => 45,
-        egui::Key::Y => 21,
-        egui::Key::Z => 44,
-        egui::Key::Space => 57,
-        egui::Key::Enter => 28,
+        egui::Key::F13 => 183,
+        egui::Key::F14 => 184,
+        egui::Key::F15 => 185,
+        egui::Key::F16 => 186,
+        egui::Key::F17 => 187,
+        egui::Key::F18 => 188,
+        egui::Key::F19 => 189,
+        egui::Key::F20 => 190,
+        egui::Key::Home => 102,
+        egui::Key::ArrowUp => 103,
+        egui::Key::PageUp => 104,
+        egui::Key::ArrowLeft => 105,
+        egui::Key::ArrowRight => 106,
+        egui::Key::End => 107,
+        egui::Key::ArrowDown => 108,
+        egui::Key::PageDown => 109,
+        egui::Key::Insert => 110,
+        egui::Key::Delete => 111,
         _ => 0,
     }
 }
@@ -1425,72 +1434,138 @@ fn egui_modifiers_to_bits(m: &egui::Modifiers) -> u32 {
 fn format_key(keyval: u32, modifiers: u32) -> String {
     let mut parts = Vec::new();
     if modifiers & 1 != 0 {
-        parts.push("ctrl");
+        parts.push("ctrl".to_string());
     }
     if modifiers & 2 != 0 {
-        parts.push("shift");
+        parts.push("shift".to_string());
     }
     if modifiers & 4 != 0 {
-        parts.push("alt");
+        parts.push("alt".to_string());
     }
     if modifiers & 8 != 0 {
-        parts.push("super");
+        parts.push("super".to_string());
     }
 
     let key_name = match keyval {
-        59 => "f1",
-        60 => "f2",
-        61 => "f3",
-        62 => "f4",
-        63 => "f5",
-        64 => "f6",
-        65 => "f7",
-        66 => "f8",
-        67 => "f9",
-        68 => "f10",
-        87 => "f11",
-        88 => "f12",
-        2 => "1",
-        3 => "2",
-        4 => "3",
-        5 => "4",
-        6 => "5",
-        7 => "6",
-        8 => "7",
-        9 => "8",
-        10 => "9",
-        11 => "0",
-        30 => "a",
-        48 => "b",
-        46 => "c",
-        32 => "d",
-        18 => "e",
-        33 => "f",
-        34 => "g",
-        35 => "h",
-        23 => "i",
-        36 => "j",
-        37 => "k",
-        38 => "l",
-        50 => "m",
-        49 => "n",
-        24 => "o",
-        25 => "p",
-        16 => "q",
-        19 => "r",
-        31 => "s",
-        20 => "t",
-        22 => "u",
-        47 => "v",
-        17 => "w",
-        45 => "x",
-        21 => "y",
-        44 => "z",
-        57 => "space",
-        28 => "enter",
-        other => return format!("key_{}", other),
+        1 => "esc".to_string(),
+        2 => "1".to_string(),
+        3 => "2".to_string(),
+        4 => "3".to_string(),
+        5 => "4".to_string(),
+        6 => "5".to_string(),
+        7 => "6".to_string(),
+        8 => "7".to_string(),
+        9 => "8".to_string(),
+        10 => "9".to_string(),
+        11 => "0".to_string(),
+        12 => "-".to_string(),
+        13 => "=".to_string(),
+        14 => "backspace".to_string(),
+        15 => "tab".to_string(),
+        16 => "q".to_string(),
+        17 => "w".to_string(),
+        18 => "e".to_string(),
+        19 => "r".to_string(),
+        20 => "t".to_string(),
+        21 => "y".to_string(),
+        22 => "u".to_string(),
+        23 => "i".to_string(),
+        24 => "o".to_string(),
+        25 => "p".to_string(),
+        26 => "[".to_string(),
+        27 => "]".to_string(),
+        28 => "enter".to_string(),
+        30 => "a".to_string(),
+        31 => "s".to_string(),
+        32 => "d".to_string(),
+        33 => "f".to_string(),
+        34 => "g".to_string(),
+        35 => "h".to_string(),
+        36 => "j".to_string(),
+        37 => "k".to_string(),
+        38 => "l".to_string(),
+        39 => ";".to_string(),
+        40 => "'".to_string(),
+        41 => "`".to_string(),
+        43 => "\\".to_string(),
+        44 => "z".to_string(),
+        45 => "x".to_string(),
+        46 => "c".to_string(),
+        47 => "v".to_string(),
+        48 => "b".to_string(),
+        49 => "n".to_string(),
+        50 => "m".to_string(),
+        51 => ",".to_string(),
+        52 => ".".to_string(),
+        53 => "/".to_string(),
+        55 => "kp_*".to_string(),
+        57 => "space".to_string(),
+        58 => "caps".to_string(),
+        59 => "f1".to_string(),
+        60 => "f2".to_string(),
+        61 => "f3".to_string(),
+        62 => "f4".to_string(),
+        63 => "f5".to_string(),
+        64 => "f6".to_string(),
+        65 => "f7".to_string(),
+        66 => "f8".to_string(),
+        67 => "f9".to_string(),
+        68 => "f10".to_string(),
+        69 => "numlock".to_string(),
+        70 => "scroll".to_string(),
+        71 => "kp_7".to_string(),
+        72 => "kp_8".to_string(),
+        73 => "kp_9".to_string(),
+        74 => "kp_-".to_string(),
+        75 => "kp_4".to_string(),
+        76 => "kp_5".to_string(),
+        77 => "kp_6".to_string(),
+        78 => "kp_+".to_string(),
+        79 => "kp_1".to_string(),
+        80 => "kp_2".to_string(),
+        81 => "kp_3".to_string(),
+        82 => "kp_0".to_string(),
+        83 => "kp_.".to_string(),
+        87 => "f11".to_string(),
+        88 => "f12".to_string(),
+        96 => "kp_enter".to_string(),
+        98 => "kp_/".to_string(),
+        102 => "home".to_string(),
+        103 => "up".to_string(),
+        104 => "pageup".to_string(),
+        105 => "left".to_string(),
+        106 => "right".to_string(),
+        107 => "end".to_string(),
+        108 => "down".to_string(),
+        109 => "pagedown".to_string(),
+        110 => "ins".to_string(),
+        111 => "del".to_string(),
+        119 => "pause".to_string(),
+        other => {
+            let key = evdev::KeyCode::new(other as u16);
+            let s = format!("{:?}", key);
+            s.strip_prefix("KEY_")
+                .unwrap_or(&s)
+                .to_lowercase()
+        }
     };
 
     parts.push(key_name);
     parts.join("+")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_key_numpad_and_modifiers() {
+        assert_eq!(format_key(96, 0), "kp_enter");
+        assert_eq!(format_key(96, 1), "ctrl+kp_enter");
+        assert_eq!(format_key(82, 0), "kp_0");
+        assert_eq!(format_key(111, 0), "del");
+        assert_eq!(format_key(1, 0), "esc");
+        assert_eq!(format_key(30, 2), "shift+a");
+        assert_eq!(format_key(59, 4), "alt+f1");
+    }
 }

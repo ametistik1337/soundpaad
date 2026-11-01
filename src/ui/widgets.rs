@@ -360,7 +360,7 @@ impl TactileButton {
 
             let (bg_color, stroke_color, text_color) = if self.danger {
                 if is_pressed {
-                    (PAL_DANGER, PAL_DANGER, PAL_ON_ACCENT)
+                    (PAL_CARD_HI, PAL_DANGER, PAL_DANGER)
                 } else if is_hovered {
                     (PAL_CARD_HI, PAL_DANGER, PAL_DANGER)
                 } else {
@@ -368,7 +368,7 @@ impl TactileButton {
                 }
             } else if self.green {
                 if is_pressed {
-                    (PAL_GREEN, PAL_GREEN, PAL_ON_ACCENT)
+                    (PAL_CARD_HI, PAL_GREEN, PAL_GREEN)
                 } else if is_hovered {
                     (PAL_CARD_HI, PAL_GREEN, PAL_GREEN)
                 } else {
@@ -376,17 +376,17 @@ impl TactileButton {
                 }
             } else if self.accent {
                 if is_pressed {
-                    (PAL_FILL, PAL_ACCENT, PAL_ACCENT)
+                    (PAL_CARD_HI, PAL_ACCENT, PAL_ACCENT)
                 } else if is_hovered {
-                    (PAL_ACCENT, PAL_ACCENT, PAL_ON_ACCENT)
+                    (PAL_CARD_HI, PAL_ACCENT, PAL_ACCENT)
                 } else {
-                    (PAL_ACCENT, PAL_ACCENT, PAL_ON_ACCENT)
+                    (PAL_CARD, PAL_LINE, PAL_ACCENT)
                 }
             } else {
                 if is_pressed {
-                    (PAL_FILL, PAL_ACCENT, PAL_ACCENT)
+                    (PAL_CARD_HI, PAL_LINE_HOVER, PAL_TEXT)
                 } else if is_hovered {
-                    (PAL_CARD_HI, PAL_ACCENT, PAL_TEXT)
+                    (PAL_CARD_HI, PAL_LINE_HOVER, PAL_TEXT)
                 } else {
                     (PAL_CARD, PAL_LINE, PAL_TEXT)
                 }
