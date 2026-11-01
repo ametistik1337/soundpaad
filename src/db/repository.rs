@@ -60,10 +60,17 @@ impl Database {
         Self::open(&db_path)
     }
 
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch(MIGRATIONS)?;
+        Ok(Self { conn })
+    }
+
     // === Tracks ===
 
     pub fn add_track(&self, track: &Track) -> Result<i64> {
-        // Автоудаление дубликата по file_path
+        // Удаляем дубликат по file_path, если был
         self.conn.execute(
             "DELETE FROM tracks WHERE file_path = ?1 AND id != (SELECT id FROM tracks WHERE file_path = ?1 LIMIT 1)",
             rusqlite::params![track.file_path],
@@ -110,24 +117,57 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn get_track(&self, id: i64) -> Result<Option<Track>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, file_path, category_id, volume, source FROM tracks WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([id], |row| {
+            Ok(Track {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                file_path: row.get(2)?,
+                category_id: row.get(3)?,
+                volume: row.get(4)?,
+                source: row.get(5)?,
+            })
+        })?;
+
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn delete_track(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    pub fn update_track_volume(&self, id: i64, volume: f64) -> Result<()> {
-        self.conn.execute("UPDATE tracks SET volume = ?1 WHERE id = ?2", rusqlite::params![volume, id])?;
+    pub fn update_volume(&self, id: i64, volume: f64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET volume = ?1 WHERE id = ?2",
+            rusqlite::params![volume, id],
+        )?;
         Ok(())
+    }
+
+    pub fn update_track_volume(&self, id: i64, volume: f64) -> Result<()> {
+        self.update_volume(id, volume)
     }
 
     // === Binds ===
 
-    pub fn add_bind(&self, bind: &Bind) -> Result<i64> {
+    pub fn set_bind(&self, track_id: i64, keyval: u32, modifiers: u32) -> Result<i64> {
         self.conn.execute(
             "INSERT OR REPLACE INTO binds (track_id, keyval, modifiers) VALUES (?1, ?2, ?3)",
-            rusqlite::params![bind.track_id, bind.keyval, bind.modifiers],
+            rusqlite::params![track_id, keyval, modifiers],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn add_bind(&self, bind: &Bind) -> Result<i64> {
+        self.set_bind(bind.track_id, bind.keyval, bind.modifiers)
     }
 
     pub fn get_binds(&self) -> Result<Vec<Bind>> {
@@ -147,7 +187,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, track_id, keyval, modifiers FROM binds WHERE keyval = ?1 AND modifiers = ?2",
         )?;
-        let rows = stmt.query_map(rusqlite::params![keyval, modifiers], |row| {
+        let mut rows = stmt.query_map(rusqlite::params![keyval, modifiers], |row| {
             Ok(Bind {
                 id: Some(row.get(0)?),
                 track_id: row.get(1)?,
@@ -155,9 +195,39 @@ impl Database {
                 modifiers: row.get(3)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map(|v| v.into_iter().next())
-            .map_err(Into::into)
+
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn find_track_by_bind(&self, keyval: u32, modifiers: u32) -> Result<Option<Track>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.name, t.file_path, t.category_id, t.volume, t.source
+             FROM tracks t
+             JOIN binds b ON t.id = b.track_id
+             WHERE b.keyval = ?1 AND b.modifiers = ?2
+             LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(rusqlite::params![keyval, modifiers], |row| {
+            Ok(Track {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                file_path: row.get(2)?,
+                category_id: row.get(3)?,
+                volume: row.get(4)?,
+                source: row.get(5)?,
+            })
+        })?;
+
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn delete_bind(&self, id: i64) -> Result<()> {
@@ -190,5 +260,60 @@ impl Database {
             rusqlite::params![name, icon_name],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tracks_and_binds() {
+        let db = Database::open_in_memory().expect("open in memory");
+
+        let track = Track {
+            id: None,
+            name: "Test Sound".to_string(),
+            file_path: "/tmp/test.mp3".to_string(),
+            category_id: None,
+            volume: 0.8,
+            source: "local".to_string(),
+        };
+        let track_id = db.add_track(&track).expect("add track");
+        assert!(track_id > 0);
+
+        let tracks = db.get_tracks().expect("get tracks");
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].name, "Test Sound");
+        assert_eq!(tracks[0].volume, 0.8);
+
+        db.update_volume(track_id, 0.5).expect("update volume");
+        let updated = db.get_track(track_id).expect("get track").expect("track exists");
+        assert_eq!(updated.volume, 0.5);
+
+        let bind_id = db.set_bind(track_id, 30, 1).expect("set bind");
+        assert!(bind_id > 0);
+
+        let binds = db.get_binds().expect("get binds");
+        assert_eq!(binds.len(), 1);
+        assert_eq!(binds[0].keyval, 30);
+        assert_eq!(binds[0].modifiers, 1);
+
+        let found = db.find_track_by_bind(30, 1).expect("find track");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, Some(track_id));
+
+        db.delete_bind(bind_id).expect("delete bind");
+        assert!(db.find_track_by_bind(30, 1).expect("find track").is_none());
+
+        db.delete_track(track_id).expect("delete track");
+        assert_eq!(db.get_tracks().expect("get tracks").len(), 0);
+    }
+
+    #[test]
+    fn test_categories() {
+        let db = Database::open_in_memory().expect("open in memory");
+        let categories = db.get_categories().expect("get categories");
+        assert!(!categories.is_empty());
     }
 }

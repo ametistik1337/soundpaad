@@ -1,20 +1,15 @@
 mod audio;
 mod db;
+mod hotkeys;
 mod shop;
 mod ui;
 
-use adw::prelude::*;
-use adw::Application;
-use gtk4::gio;
-use gtk4::glib;
-use std::cell::RefCell;
-use std::rc::Rc;
-
+use std::sync::{Arc, Mutex};
 use audio::player::AudioPlayer;
 use audio::virtual_mic::VirtualMic;
 use db::repository::Database;
-
-const APP_ID: &str = "com.soundpaad.app";
+use hotkeys::{HotkeyEvent, HotkeyListener};
+use ui::app::SoundpadApp;
 
 pub struct AppState {
     pub db: Database,
@@ -22,34 +17,85 @@ pub struct AppState {
     pub virtual_mic: VirtualMic,
 }
 
-fn main() -> glib::ExitCode {
-    // Убиваем старые процессы soundpaad
+fn main() -> eframe::Result {
+    // Убиваем старые зависшие процессы soundpaad
     kill_old_processes();
 
-    gstreamer::init().expect("Не удалось инициализировать GStreamer");
+    // 1. Инициализация БД
+    let db = Database::open_default().expect("Не удалось открыть базу данных soundpaad.db");
 
-    let app = Application::builder()
-        .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::FLAGS_NONE)
-        .build();
-
-    app.connect_activate(build_ui);
-    app.run()
-}
-
-fn build_ui(app: &Application) {
-    let db = Database::open_default().expect("Не удалось открыть базу данных");
-    let virtual_mic = VirtualMic::new().expect("Не удалось определить аудио сервер");
+    // 2. Инициализация и проверка виртуального микрофона
+    let mut virtual_mic = VirtualMic::new().expect("Не удалось определить аудио сервер (PipeWire/PulseAudio)");
+    if let Err(e) = virtual_mic.create() {
+        eprintln!("Предупреждение при создании виртуального микрофона: {}", e);
+    }
     let sink_name = virtual_mic.sink_name().to_string();
-    let player = AudioPlayer::new(&sink_name).expect("Не удалось инициализировать аудио плеер");
 
-    let state = Rc::new(RefCell::new(AppState {
+    // 3. Инициализация чистого Rust аудио-плеера (rodio + cpal)
+    let player = AudioPlayer::new(&sink_name).expect("Не удалось инициализировать AudioPlayer");
+
+    let state = Arc::new(Mutex::new(AppState {
         db,
         player,
         virtual_mic,
     }));
 
-    let _ui = ui::app::AppUI::build(app, state.clone());
+    // 4. Запуск фонового слушателя глобальных хоткеев через evdev
+    let (hotkey_tx, hotkey_rx) = crossbeam_channel::unbounded::<HotkeyEvent>();
+    let _hotkey_listener = match HotkeyListener::start(hotkey_tx) {
+        Ok(listener) => Some(listener),
+        Err(err) => {
+            eprintln!("Не удалось запустить слушатель хоткеев evdev: {}", err);
+            None
+        }
+    };
+
+    let hotkey_state = Arc::clone(&state);
+    std::thread::spawn(move || {
+        while let Ok(event) = hotkey_rx.recv() {
+            let mut modifiers = 0u32;
+            if event.ctrl {
+                modifiers |= 1;
+            }
+            if event.shift {
+                modifiers |= 2;
+            }
+            if event.alt {
+                modifiers |= 4;
+            }
+            if event.meta {
+                modifiers |= 8;
+            }
+
+            let keyval = event.key_code as u32;
+
+            if let Ok(mut s) = hotkey_state.lock() {
+                if let Ok(Some(track)) = s.db.find_track_by_bind(keyval, modifiers) {
+                    if let Some(id) = track.id {
+                        let vol = track.volume as f32;
+                        let _ = s.player.play(id, &track.file_path, vol);
+                    }
+                }
+            }
+        }
+    });
+
+    // 5. Запуск eframe GUI с палитрой Kinetix Pal
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([880.0, 620.0])
+            .with_min_inner_size([680.0, 480.0])
+            .with_title("soundpaad")
+            .with_app_id("com.soundpaad.app"),
+        ..Default::default()
+    };
+
+    let app_state = Arc::clone(&state);
+    eframe::run_native(
+        "soundpaad",
+        native_options,
+        Box::new(move |cc| Ok(Box::new(SoundpadApp::new(cc, app_state)))),
+    )
 }
 
 fn kill_old_processes() {

@@ -1,24 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#613583"/>
-      <stop offset="100%" style="stop-color:#1c71d8"/>
-    </linearGradient>
-  </defs>
-  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
-  <!-- Sound wave icon -->
-  <g transform="translate(64,64)" fill="none" stroke="white" stroke-width="4" stroke-linecap="round">
-    <path d="M-8,-20 L-8,20"/>
-    <path d="M0,-28 L0,28"/>
-    <path d="M8,-20 L8,20"/>
-    <path d="M-16,-12 L-16,12"/>
-    <path d="M16,-12 L16,12"/>
-  </g>
-  <!-- Microphone icon -->
-  <g transform="translate(88,88)" fill="white">
-    <rect x="-4" y="-12" width="8" height="16" rx="4"/>
-    <path d="M-8,0 Q-8,10 0,10 Q8,10 8,0" fill="none" stroke="white" stroke-width="2"/>
-    <line x1="0" y1="10" x2="0" y2="14" stroke="white" stroke-width="2"/>
-    <line x1="-4" y1="14" x2="4" y2="14" stroke="white" stroke-width="2"/>
-  </g>
+  <!-- Base frame: Kinetix squircle, panel #0A0B0E, subpixel 1px line #23262E -->
+  <rect x="0.5" y="0.5" width="127" height="127" rx="28" fill="#0A0B0E" stroke="#23262E" stroke-width="1"/>
+  
+  <!-- 3x3 Tactile Pad Matrix (cards #13151A, stroke #23262E, r=4) -->
+  <!-- Row 0 -->
+  <rect x="16.5" y="16.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  <rect x="50.5" y="16.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  <rect x="84.5" y="16.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  
+  <!-- Row 1 -->
+  <rect x="16.5" y="50.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  
+  <!-- Center Active Pad (Row 1, Col 1) -->
+  <rect x="50.5" y="50.5" width="27" height="27" rx="4" fill="#18150D" stroke="#F59E0B" stroke-width="1"/>
+  
+  <rect x="84.5" y="50.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  
+  <!-- Row 2 -->
+  <rect x="16.5" y="84.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  <rect x="50.5" y="84.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  <rect x="84.5" y="84.5" width="27" height="27" rx="4" fill="#13151A" stroke="#23262E" stroke-width="1"/>
+  
+  <!-- Inactive tactile markers (subpixel 1.5px dots, line #23262E) -->
+  <circle cx="30" cy="30" r="1.5" fill="#23262E"/>
+  <circle cx="64" cy="30" r="1.5" fill="#23262E"/>
+  <circle cx="98" cy="30" r="1.5" fill="#23262E"/>
+  <circle cx="30" cy="64" r="1.5" fill="#23262E"/>
+  <circle cx="98" cy="64" r="1.5" fill="#23262E"/>
+  <circle cx="30" cy="98" r="1.5" fill="#23262E"/>
+  <circle cx="64" cy="98" r="1.5" fill="#23262E"/>
+  <circle cx="98" cy="98" r="1.5" fill="#23262E"/>
+  
+  <!-- Center Active Impulse & Microphone Route (Amber #F59E0B) -->
+  <!-- Flanking acoustic soundwave impulse bars -->
+  <line x1="53.5" y1="61" x2="53.5" y2="66" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="56.5" y1="58.5" x2="56.5" y2="68.5" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="71.5" y1="58.5" x2="71.5" y2="68.5" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="74.5" y1="61" x2="74.5" y2="66" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+  
+  <!-- Central Microphone Capsule -->
+  <rect x="61" y="55.5" width="6" height="10" rx="3" fill="#F59E0B"/>
+  
+  <!-- Microphone U-cradle -->
+  <path d="M 58.5 61.5 C 58.5 68 69.5 68 69.5 61.5" fill="none" stroke="#F59E0B" stroke-width="1.6" stroke-linecap="round"/>
+  
+  <!-- Microphone route stem & base -->
+  <line x1="64" y1="68" x2="64" y2="72.5" stroke="#F59E0B" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="60.5" y1="72.5" x2="67.5" y2="72.5" stroke="#F59E0B" stroke-width="1.6" stroke-linecap="round"/>
 </svg>
